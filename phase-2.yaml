@@ -1,0 +1,126 @@
+- hosts: all
+  tasks:
+  - name: "install a bunch essentials"
+    apt:
+      update_cache: yes
+      name:
+        - locales
+        - aptitude
+        - vim-gtk3
+        - less
+        - man
+        - aptitude-doc-en
+        - tmux
+        - python-pexpect
+  - name: "use en_US.UTF-8 locale"
+    locale_gen:
+      name: en_US.UTF-8
+  - name: "base applications"
+    apt:
+      name:
+        - python-ldap
+        - lynx
+        - ldap-utils
+        - ldapscripts
+        - nslcd
+        - slapd
+        - krb5-admin-server
+        - libpam-krb5
+  - name: "add backend database"
+    ldap_attr:
+      dn: olcDatabase={1}mdb,cn=config
+      name: olcSuffix
+      state: exact
+      values: dc=danielcliffordmiller,dc=com
+  - name: "add backend db rootDN"
+    ldap_attr:
+      dn: olcDatabase={1}mdb,cn=config
+      name: olcRootDN
+      state: exact
+      values: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
+  - name: "remove backend db rootPW"
+    ldap_attr:
+      dn: olcDatabase={1}mdb,cn=config
+      name: olcRootPW
+      state: exact
+      values: []
+  - name: "add base organization"
+    ldap_entry:
+      dn: dc=danielcliffordmiller,dc=com
+      objectClass:
+        - top
+        - dcObject
+        - organization
+      attributes:
+        o: chezmiller
+        dc: danielcliffordmiller
+  - name: "add Users"
+    ldap_entry:
+      dn: ou=Users,dc=danielcliffordmiller,dc=com
+      objectClass: organizationalUnit
+      attributes:
+        ou: Users
+  - name: "add Groups"
+    ldap_entry:
+      dn: ou=Groups,dc=danielcliffordmiller,dc=com
+      objectClass: organizationalUnit
+      attributes:
+        ou: Groups
+  - name: "configure nslcd"
+    lineinfile:
+      path: /etc/nslcd.conf
+      regexp: "^base "
+      line: "base dc=danielcliffordmiller,dc=com"
+  - name: "configure ldapscripts server"
+    lineinfile:
+      path: /etc/ldapscripts/ldapscripts.conf
+      regexp: "^#?SERVER="
+      line: 'SERVER="ldapi:///"'
+  - name: "configure ldapscripts sasl mech"
+    lineinfile:
+      path: /etc/ldapscripts/ldapscripts.conf
+      regexp: "^#?SASLAUTH="
+      line: 'SASLAUTH="EXTERNAL"'
+  - name: "configure ldapscripts homes"
+    lineinfile:
+      path: /etc/ldapscripts/ldapscripts.conf
+      regexp: '^#?CREATEHOMES='
+      line: 'CREATEHOMES="yes"'
+  - name: "configure ldapscripts group suffix"
+    lineinfile:
+      path: /etc/ldapscripts/ldapscripts.conf
+      regexp: "^#?GSUFFIX="
+      line: 'GSUFFIX="ou=Groups"'
+  - name: "configure ldapscripts users suffix"
+    lineinfile:
+      path: /etc/ldapscripts/ldapscripts.conf
+      regexp: '^#?USUFFIX='
+      line: 'USUFFIX="ou=Users"'
+  - name: "configure nsswitch.conf"
+    replace:
+      path: /etc/nsswitch.conf
+      regexp: '^((?:passwd|group|shadow):\s+)(?:ldap )?(.*)$'
+      replace: '\1ldap \2'
+  - name: "copy krb admin server settings"
+    copy:
+      src: krb5.conf
+      dest: /etc/krb5.conf
+  - name: "edit kdc.conf"
+    lineinfile:
+      path: /etc/krb5kdc/kdc.conf
+      backrefs: yes
+      regexp: '^(\s*)(?:EXAMPLE\.COM)(.*)$'
+      line: '\1DANIELCLIFFORDMILLER.COM\2'
+  - name: 'init kdc'
+    expect:
+      creates: /var/lib/krb5kdc/principal
+      command: krb5_newrealm
+      responses:
+        'Enter KDC database master key:': foobar2
+        'Re-enter KDC database master key to verify:': foobar2
+  - name: 'krb5 acl'
+    lineinfile:
+      path: /etc/krb5kdc/kadm5.acl
+      regexp: '(?:# ?)?\*/admin \*'
+      line: '*/admin *'
+
