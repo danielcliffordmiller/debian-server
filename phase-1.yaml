@@ -1,0 +1,175 @@
+---
+- hosts: all
+  become: yes
+  become_method: sudo
+  tasks:
+  - name: "root disk partition"
+    parted:
+      device: /dev/sda
+      number: 1
+      part_end: 20GiB
+      state: present
+  - name: "swap partition"
+    parted:
+      device: /dev/sda
+      number: 2
+      part_start: 20GiB
+      part_end: 22GiB
+      state: present
+  - name: "home disk partition"
+    parted:
+      device: /dev/sda
+      number: 3
+      part_start: 22GiB
+      state: present
+  - name: "format root"
+    filesystem:
+      dev: /dev/sda1
+      fstype: ext4
+  - name: "check swap"
+    command: grep -q /dev/sda2 /proc/swaps
+    register: swap_mounted
+    ignore_errors: True
+  - name: "make swap"
+    command: mkswap /dev/sda2
+    when: swap_mounted.failed
+  - name: "sync"
+    command: sync
+    when: swap_mounted.failed
+  - name: "swap on"
+    command: swapon /dev/sda2
+    when: swap_mounted.failed
+  - name: "format home"
+    filesystem:
+      dev: /dev/sda3
+      fstype: ext4
+  - name: "make debinst mount folder"
+    file:
+      path: /mnt/debinst
+      state: directory
+  - name: "mount debinst"
+    mount:
+      fstype: ext4
+      src: /dev/sda1
+      path: /mnt/debinst
+      state: mounted
+  - name: "install debootstrap"
+    apt:
+      update_cache: yes
+      name: debootstrap
+  - name: "deboot the files"
+    command:
+    args:
+      argv:
+        - /usr/sbin/debootstrap
+        - --arch
+        - amd64
+        - stretch
+        - /mnt/debinst
+        - http://ftp.us.debian.org/debian
+      creates: /mnt/debinst/bin
+  - name: "install ansible"
+    apt:
+      name: ansible
+  - name: "mount dev"
+    mount:
+      fstype: none
+      opts: bind
+      src: /dev
+      path: /mnt/debinst/dev
+      state: mounted
+  - name: "mount sys"
+    mount:
+      fstype: none
+      opts: bind
+      src: /sys
+      path: /mnt/debinst/sys
+      state: mounted
+  - name: "mount proc"
+    mount:
+      fstype: proc
+      opts: defaults
+      src: proc
+      path: /mnt/debinst/proc
+      state: mounted
+  - name: "copy fstab into chroot"
+    copy:
+      src: fstab
+      dest: /mnt/debinst/etc/fstab
+  - name: "copy tzdata into chroot"
+    copy:
+      src: adjtime
+      dest: /mnt/debinst/etc/adjtime
+  - name: "copy interfaces"
+    copy:
+      src: interfaces
+      dest: /mnt/debinst/etc/network/interfaces
+  - name: "set hostname"
+    lineinfile:
+      path: /mnt/debinst/etc/hostname
+      line: vbox1
+  - name: "copy resolv.conf"
+    copy:
+      remote_src: yes
+      src: /etc/resolv.conf
+      dest: /mnt/debinst/etc/resolv.conf
+  - name: "copy sources.lst"
+    copy:
+      src: sources.list
+      dest: /mnt/debinst/etc/apt/sources.list
+  - name: "install pexpect"
+    apt:
+      name: python-pexpect
+  - name: "setup timezone stuff"
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      LANG: C.UTF-8
+    expect:
+      command: chroot /mnt/debinst /bin/bash
+      responses:
+        '#':
+          - apt update
+          - echo US/Central > /etc/timezone
+          - ln -f -s /usr/share/zoneinfo/US/Central /etc/localtime
+          - exit
+  - name: "update apt / install locale / install console-setup"
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      LANG: C.UTF-8
+    expect:
+      command: chroot /mnt/debinst /bin/bash
+      responses:
+        '#':
+          - apt update
+          - sed -i -e '/en_US\.UTF-8/s/^# *//' /etc/locale.gen
+          - locale-gen
+          - apt-get -q -y install console-setup
+          - exit
+  - name: "install kernel and bootloader"
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      LANG: C.UTF-8
+    expect:
+      timeout: 60
+      command: chroot /mnt/debinst /bin/bash
+      responses:
+        '#':
+          - apt-get -q -y install linux-image-amd64
+          - apt-get -q -y install grub-pc
+          - grub-install /dev/sda
+          - update-grub
+          - exit
+  - name: "install ssh, python, and passwd root"
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      LANG: C.UTF-8
+    expect:
+      command: chroot /mnt/debinst /bin/bash
+      responses:
+        '#':
+          - apt-get -q -y install ssh python
+          - passwd
+          - sed -i -e '/PermitRootLogin/aPermitRootLogin yes' /etc/ssh/sshd_config
+          - systemctl reload ssh
+          - exit
+        "password:": foobar
