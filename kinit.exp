@@ -34,17 +34,21 @@ proc add_principal {spawn_id principal password} {
     expect $kadmin_prompt
 }
 
+proc no_principal_for {spec principals} {
+    return [expr {[lsearch $principals "$spec*"] == -1}]
+}
+
 spawn -noecho kadmin.local
 
 expect $kadmin_prompt
 
 set principals [list_principals $spawn_id]
 
-if {[lsearch $principals "danmiller*"] == -1} {
+if [no_principal_for "danmiller" $principals] {
     add_principal $spawn_id "danmiller" "qwerty"
 }
 
-if {[lsearch $principals "danmiller/admin*"] == -1} {
+if [no_principal_for "danmiller/admin" $principals] {
     add_principal $spawn_id "danmiller/admin" "qwerty2"
 }
 
